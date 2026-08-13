@@ -41,7 +41,7 @@
 </template>
 
 <script>
-import path from 'path'
+import { resolveRoutePath } from '@/utils/route-path'
 
 export default {
   data() {
@@ -132,7 +132,7 @@ export default {
       let tags = []
       routes.forEach(route => {
         if (route.meta && route.meta.affix) {
-          const tagPath = path.resolve(basePath, route.path)
+          const tagPath = resolveRoutePath(basePath, route.path)
           tags.push({
             fullPath: tagPath,
             path: tagPath,
