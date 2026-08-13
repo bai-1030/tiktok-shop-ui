@@ -60,9 +60,15 @@ export function generaMenu(routes, data) {
 const viewsModules = import.meta.glob('../../views/**/*.vue')
 
 export const loadView = (view, name) => { // 路由懒加载
-  const key = `../../views${view}.vue`
+  // 跨境业务页面目前仅实现前端模拟页，菜单仍复用后端已有的占位配置。
+  const mockViews = {
+    ShopManage: '/cross-border/shop/index',
+    OrderCenter: '/cross-border/order/index'
+  }
+  const resolvedView = mockViews[name] || view
+  const key = `../../views${resolvedView}.vue`
   // 兜底：索引未命中时回退到动态 import
-  const loader = viewsModules[key] || (() => import(`../../views${view}.vue`))
+  const loader = viewsModules[key] || (() => import(`../../views${resolvedView}.vue`))
   if (!name) return loader
 
   // keep-alive 的 include 按组件 name 匹配，而缓存名单存放的是路由 name。
