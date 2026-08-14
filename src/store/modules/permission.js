@@ -63,7 +63,9 @@ export const loadView = (view, name) => { // 路由懒加载
   // 跨境业务页面目前仅实现前端模拟页，菜单仍复用后端已有的占位配置。
   const mockViews = {
     ShopManage: '/cross-border/shop/index',
-    OrderCenter: '/cross-border/order/index'
+    OrderCenter: '/cross-border/order/index',
+    PackageCenter: '/cross-border/package/index',
+    SyncTask: '/cross-border/sync-task/index'
   }
   const resolvedView = mockViews[name] || view
   const key = `../../views${resolvedView}.vue`

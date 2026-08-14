@@ -32,8 +32,8 @@
           <el-table-column label="配置名称" prop="configName" min-width="150" show-overflow-tooltip />
           <el-table-column label="API 地址" prop="apiBaseUrl" min-width="250" show-overflow-tooltip />
           <el-table-column label="AppKey" prop="appKey" min-width="160" show-overflow-tooltip />
-          <el-table-column label="签名方式" prop="signType" width="120" />
-          <el-table-column label="状态" prop="status" width="100" align="center">
+          <el-table-column label="签名方式" prop="signType" width="140" />
+          <el-table-column label="状态" prop="status" width="120" align="center">
             <template #default="scope">
               <el-switch
                 v-permisaction="['admin:miaoshouConfig:status']"
@@ -47,10 +47,10 @@
           <el-table-column label="更新时间" prop="updatedAt" width="180">
             <template #default="scope"><span>{{ parseTime(scope.row.updatedAt) }}</span></template>
           </el-table-column>
-          <el-table-column label="操作" width="220" align="center" fixed="right">
+          <el-table-column label="操作" width="230" align="center" fixed="right">
             <template #default="scope">
               <el-button v-permisaction="['admin:miaoshouConfig:edit']" type="primary" link size="small" :icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
-              <el-button v-permisaction="['admin:miaoshouConfig:test']" type="success" link size="small" :icon="Connection" @click="handleTest(scope.row)">测试连接</el-button>
+              <el-button v-permisaction="['admin:miaoshouConfig:test']" type="success" link size="small" :icon="Connection" @click="handleTest(scope.row)">验证凭证</el-button>
               <el-button v-permisaction="['admin:miaoshouConfig:remove']" type="danger" link size="small" :icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
             </template>
           </el-table-column>
@@ -72,7 +72,7 @@
             <el-form-item label="AppSecret" prop="appSecret">
               <el-input v-model="form.appSecret" type="password" show-password :placeholder="isEdit ? '留空表示不修改' : '请输入 AppSecret'" autocomplete="new-password" />
             </el-form-item>
-            <el-form-item label="签名方式" prop="signType"><el-input v-model="form.signType" placeholder="例如：MD5 或 HMAC-SHA256" /></el-form-item>
+            <el-form-item label="签名方式" prop="signType"><el-input v-model="form.signType" disabled /></el-form-item>
             <el-form-item label="签名版本" prop="signVersion"><el-input v-model="form.signVersion" placeholder="例如：1.0" /></el-form-item>
             <el-form-item label="请求超时（秒）" prop="requestTimeoutSeconds"><el-input-number v-model="form.requestTimeoutSeconds" :min="1" :max="600" controls-position="right" /></el-form-item>
             <el-form-item label="状态" prop="status"><el-radio-group v-model="form.status"><el-radio :label="1">启用</el-radio><el-radio :label="2">禁用</el-radio></el-radio-group></el-form-item>
@@ -111,20 +111,28 @@ export default {
       this.loading = true
       listMiaoshouConfig(this.queryParams).then(response => { this.configList = response.data.list; this.total = response.data.count }).finally(() => { this.loading = false })
     },
-    reset() { this.form = { id: undefined, configName: '', apiBaseUrl: '', appKey: '', appSecret: '', signType: 'MD5', signVersion: '1.0', requestTimeoutSeconds: 30, status: 1, remark: '' }; this.resetForm('form') },
+    reset() {
+      this.form = { id: undefined, configName: '', apiBaseUrl: 'https://openapi-erp.91miaoshou.com', appKey: '', appSecret: '', signType: 'HMAC-SHA256', signVersion: '1.0', requestTimeoutSeconds: 30, status: 1, remark: '' }
+      this.resetForm('form')
+    },
     handleQuery() { this.queryParams.pageIndex = 1; this.getList() },
     resetQuery() { this.resetForm('queryForm'); this.handleQuery() },
     handleSelectionChange(selection) { this.ids = selection.map(item => item.id); this.single = selection.length !== 1; this.multiple = selection.length === 0 },
     handleAdd() { this.reset(); this.isEdit = false; this.title = '新增妙手配置'; this.open = true },
     handleUpdate(row) {
       this.reset()
-      getMiaoshouConfig((row && row.id) || this.ids[0]).then(response => { this.form = { ...response.data, appSecret: '' }; this.isEdit = true; this.title = '修改妙手配置'; this.open = true })
+      getMiaoshouConfig((row && row.id) || this.ids[0]).then(response => { this.form = { ...response.data, appSecret: '', signType: 'HMAC-SHA256' }; this.isEdit = true; this.title = '修改妙手配置'; this.open = true })
     },
     handleStatus(row) {
       const status = row.status === 1 ? 2 : 1
       updateMiaoshouConfigStatus(row.id, status).then(() => { this.msgSuccess('状态更新成功'); this.getList() })
     },
-    handleTest(row) { testMiaoshouConfig(row.id).then(() => this.msgSuccess('妙手 API 地址连接成功')) },
+    handleTest(row) {
+      testMiaoshouConfig(row.id).then(response => {
+        const result = response.data || {}
+        this.msgSuccess(`妙手凭证验证成功，返回 ${result.shopCount || 0} 个店铺`)
+      })
+    },
     submitForm() {
       this.$refs.form.validate(valid => {
         if (!valid) return

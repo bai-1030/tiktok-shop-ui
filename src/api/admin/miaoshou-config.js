@@ -26,6 +26,10 @@ export function updateMiaoshouConfigStatus(id, status) {
   return request({ url: '/api/v1/miaoshou-config/' + id + '/status', method: 'put', data })
 }
 
-export function testMiaoshouConfig(id) {
-  return request({ url: '/api/v1/miaoshou-config/' + id + '/test', method: 'post' })
+export function testMiaoshouConfig(id, params) {
+  return request({ url: '/api/v1/miaoshou-config/' + id + '/test', method: 'post', params })
+}
+
+export function listMiaoshouShops(id, query) {
+  return request({ url: '/api/v1/miaoshou-config/' + id + '/shops', method: 'get', params: query })
 }
