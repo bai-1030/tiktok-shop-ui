@@ -6,7 +6,7 @@
           <div>
             <div class="eyebrow">DATA SYNCHRONIZATION</div>
             <h1>同步任务</h1>
-            <p>统一监控 TikTok Shop 商品、订单、库存与物流数据同步</p>
+            <p>统一监控 TikTok Shop 包裹与店铺数据的异步同步</p>
           </div>
           <div class="heading-actions">
             <span><i />调度服务正常 · 更新于 {{ lastRefresh }}</span>
@@ -81,7 +81,7 @@
                 <el-button :icon="RefreshRight" :disabled="!retryableSelectedCount" @click="batchRetry">批量重试<span v-if="retryableSelectedCount">（{{ retryableSelectedCount }}）</span></el-button>
                 <el-button :icon="Download" :disabled="!selectedIds.length" @click="exportSelection">导出结果</el-button>
               </div>
-              <div class="toolbar-meta"><span>已选 {{ selectedIds.length }} 项</span><el-tooltip content="当前页面使用前端模拟任务数据" placement="top"><el-tag type="info" effect="plain" round>DEMO</el-tag></el-tooltip></div>
+              <div class="toolbar-meta"><span>已选 {{ selectedIds.length }} 项</span><el-tag type="success" effect="plain" round>实时队列</el-tag></div>
             </div>
 
             <el-table v-loading="loading" :data="pagedTasks" row-key="id" class="task-table" @selection-change="handleSelectionChange">
@@ -130,13 +130,13 @@
               </el-table-column>
             </el-table>
 
-            <div class="task-pagination"><span>共 {{ filteredTasks.length }} 条执行记录</span><el-pagination v-model:current-page="queryParams.pageIndex" v-model:page-size="queryParams.pageSize" background layout="sizes, prev, pager, next, jumper" :page-sizes="[10, 20, 50]" :total="filteredTasks.length" /></div>
+            <div class="task-pagination"><span>共 {{ taskTotal }} 条执行记录</span><el-pagination v-model:current-page="queryParams.pageIndex" v-model:page-size="queryParams.pageSize" background layout="sizes, prev, pager, next, jumper" :page-sizes="[10, 20, 50]" :total="taskTotal" /></div>
           </template>
 
           <template v-else>
             <div class="schedule-intro">
               <div><el-icon><Clock /></el-icon><div><strong>自动调度策略</strong><span>统一维护同步频率，业务任务按店铺顺序执行并自动避免并发冲突。</span></div></div>
-              <el-tag type="success" effect="plain" round>{{ enabledScheduleCount }} 条策略运行中</el-tag>
+              <div><el-button type="primary" :icon="Plus" @click="openScheduleEditor(null)">新建策略</el-button><el-tag type="success" effect="plain" round>{{ enabledScheduleCount }} 条策略运行中</el-tag></div>
             </div>
             <el-table :data="schedules" row-key="id" class="schedule-table">
               <el-table-column label="策略名称" min-width="235">
@@ -208,28 +208,31 @@
         </el-drawer>
 
         <el-dialog v-model="taskDialogOpen" title="新建同步任务" width="680px" :close-on-click-modal="false">
-          <el-alert title="本次操作仅创建并运行当前页面模拟任务" type="info" :closable="false" show-icon class="demo-alert" />
+          <el-alert title="任务将写入持久化队列，由后台执行器异步处理；关闭页面不会中断任务。" type="info" :closable="false" show-icon class="demo-alert" />
           <el-form ref="taskForm" :model="taskForm" :rules="taskRules" label-position="top">
             <div class="form-section-title">同步范围</div>
             <el-row :gutter="18">
+              <el-col :xs="24" :sm="12"><el-form-item label="妙手配置" prop="miaoshouConfigId"><el-select v-model="taskForm.miaoshouConfigId" placeholder="请选择妙手配置" style="width: 100%" @change="handleTaskConfigChange"><el-option v-for="config in miaoshouConfigs" :key="config.id" :label="config.configName || config.name" :value="config.id" /></el-select></el-form-item></el-col>
               <el-col :xs="24" :sm="12"><el-form-item label="同步类型" prop="taskType"><el-select v-model="taskForm.taskType" placeholder="请选择同步类型" style="width: 100%"><el-option v-for="type in taskTypeOptions" :key="type.value" :label="type.label" :value="type.value"><div class="type-option"><i :style="{ background: type.color }" /><span>{{ type.label }}</span><small>{{ type.description }}</small></div></el-option></el-select></el-form-item></el-col>
-              <el-col :xs="24" :sm="12"><el-form-item label="目标店铺" prop="shopId"><el-select v-model="taskForm.shopId" placeholder="请选择店铺" filterable style="width: 100%"><el-option label="全部启用店铺" value="all" /><el-option v-for="shop in shopOptions" :key="shop.value" :label="shop.label" :value="shop.value" /></el-select></el-form-item></el-col>
+              <el-col v-if="['package', 'tracking'].includes(taskForm.taskType)" :span="24"><el-form-item label="目标店铺"><el-select v-model="taskForm.shopIds" multiple collapse-tags collapse-tags-tooltip placeholder="不选择表示全部启用店铺" filterable style="width: 100%"><el-option v-for="shop in taskShopOptions" :key="shop.value" :label="shop.label" :value="shop.value" /></el-select></el-form-item></el-col>
+              <el-col v-else-if="taskForm.taskType === 'shop'" :span="24"><el-form-item label="目标站点" prop="sites"><el-select v-model="taskForm.sites" multiple placeholder="请选择站点" filterable allow-create default-first-option style="width: 100%"><el-option v-for="site in siteOptions" :key="site.value" :label="site.label" :value="site.value" /></el-select></el-form-item></el-col>
               <el-col :xs="24" :sm="12"><el-form-item label="同步模式" prop="mode"><el-radio-group v-model="taskForm.mode"><el-radio-button value="incremental">增量同步</el-radio-button><el-radio-button value="full">全量同步</el-radio-button></el-radio-group></el-form-item></el-col>
               <el-col :xs="24" :sm="12"><el-form-item label="执行方式" prop="queueMode"><el-radio-group v-model="taskForm.queueMode"><el-radio-button value="immediate">立即执行</el-radio-button><el-radio-button value="queued">加入队列</el-radio-button></el-radio-group></el-form-item></el-col>
-              <el-col v-if="['order', 'orderStatus'].includes(taskForm.taskType)" :span="24"><el-form-item label="订单时间范围" prop="dateRange"><el-date-picker v-model="taskForm.dateRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" style="width: 100%" /></el-form-item></el-col>
+              <el-col v-if="['package', 'tracking'].includes(taskForm.taskType)" :span="24"><el-form-item label="订单修改时间范围"><el-date-picker v-model="taskForm.dateRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss" range-separator="至" start-placeholder="开始时间（可选）" end-placeholder="结束时间（可选）" :disabled-date="disableFutureDate" style="width: 100%" /></el-form-item></el-col>
             </el-row>
             <el-alert v-if="taskForm.mode === 'full'" title="全量同步将重新扫描店铺全部数据，耗时较长，请避免频繁执行。" type="warning" :closable="false" show-icon class="mode-alert" />
-            <div class="form-section-title">写入策略</div>
-            <el-form-item label="数据冲突处理" prop="conflictPolicy"><el-radio-group v-model="taskForm.conflictPolicy"><el-radio value="platformPriority">平台数据优先</el-radio><el-radio value="localPriority">本地数据优先</el-radio><el-radio value="skip">跳过并记录</el-radio></el-radio-group></el-form-item>
             <el-form-item label="任务备注"><el-input v-model="taskForm.remark" type="textarea" :rows="3" maxlength="200" show-word-limit placeholder="填写本次同步目的或注意事项" /></el-form-item>
           </el-form>
           <template #footer><el-button @click="taskDialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitTask">创建任务</el-button></template>
         </el-dialog>
 
         <el-dialog v-model="scheduleDialogOpen" title="配置定时策略" width="560px" :close-on-click-modal="false">
-          <el-alert title="业务策略会映射为系统定时任务，修改后从下一次调度开始生效。" type="info" :closable="false" show-icon class="demo-alert" />
+          <el-alert title="策略由持久化调度器触发，服务重启后仍会继续计算下一次执行时间。" type="info" :closable="false" show-icon class="demo-alert" />
           <el-form ref="scheduleForm" :model="scheduleForm" :rules="scheduleRules" label-position="top">
             <el-form-item label="策略名称" prop="name"><el-input v-model="scheduleForm.name" /></el-form-item>
+            <el-row :gutter="16"><el-col :span="12"><el-form-item label="妙手配置" prop="miaoshouConfigId"><el-select v-model="scheduleForm.miaoshouConfigId" style="width: 100%"><el-option v-for="config in miaoshouConfigs" :key="config.id" :label="config.configName || config.name" :value="config.id" /></el-select></el-form-item></el-col><el-col :span="12"><el-form-item label="同步类型" prop="taskType"><el-select v-model="scheduleForm.taskType" style="width: 100%"><el-option v-for="type in taskTypeOptions" :key="type.value" :label="type.label" :value="type.value" /></el-select></el-form-item></el-col></el-row>
+            <el-form-item v-if="['package', 'tracking'].includes(scheduleForm.taskType)" label="目标店铺"><el-select v-model="scheduleForm.shopIds" multiple collapse-tags placeholder="不选择表示全部启用店铺" style="width: 100%"><el-option v-for="shop in scheduleShopOptions" :key="shop.value" :label="shop.label" :value="shop.value" /></el-select></el-form-item>
+            <el-form-item v-else label="目标站点" prop="sites"><el-select v-model="scheduleForm.sites" multiple filterable allow-create default-first-option style="width: 100%"><el-option v-for="site in siteOptions" :key="site.value" :label="site.label" :value="site.value" /></el-select></el-form-item>
             <el-form-item label="执行频率" prop="frequency"><el-select v-model="scheduleForm.frequency" style="width: 100%"><el-option v-for="frequency in frequencyOptions" :key="frequency.value" :label="`${frequency.label}（${frequency.cron}）`" :value="frequency.value" /></el-select></el-form-item>
             <el-form-item label="任务错过后的处理"><el-radio-group v-model="scheduleForm.misfirePolicy"><el-radio value="once">恢复后执行一次</el-radio><el-radio value="skip">跳过本次</el-radio></el-radio-group></el-form-item>
             <el-form-item label="并发策略"><el-radio-group v-model="scheduleForm.concurrent"><el-radio value="forbid">禁止同类任务并发</el-radio><el-radio value="allow">允许并发</el-radio></el-radio-group></el-form-item>
@@ -249,10 +252,40 @@ import {
   Document, Download, EditPen, Loading, Plus, Refresh, RefreshLeft, RefreshRight, Search,
   SwitchButton, Tickets, Timer, User, VideoPlay, View, WarningFilled
 } from '@element-plus/icons-vue'
+import { listMiaoshouConfig } from '@/api/admin/miaoshou-config'
+import { listCrossBorderShops } from '@/api/cross-border/shop'
 import {
-  createMockSchedules, createMockSyncTasks, frequencyOptions, shopOptions,
-  taskStatusOptions, taskTypeOptions, triggerOptions
-} from './mock-data'
+  cancelCrossBorderSyncTask, createCrossBorderSyncSchedule, createCrossBorderSyncTask,
+  getCrossBorderSyncTask, getCrossBorderSyncTaskSummary, listCrossBorderSyncSchedules,
+  listCrossBorderSyncTasks, retryCrossBorderSyncTask, runCrossBorderSyncSchedule,
+  runCrossBorderSyncTaskAgain, toggleCrossBorderSyncSchedule, updateCrossBorderSyncSchedule
+} from '@/api/cross-border/sync-task'
+
+const taskTypeOptions = [
+  { value: 'package', label: '包裹与订单', shortLabel: '包裹', color: '#2563eb', description: '同步包裹并由包裹数据反推订单' },
+  { value: 'tracking', label: '包裹物流轨迹', shortLabel: '轨迹', color: '#0891b2', description: '逐包裹同步物流轨迹并自动去重' },
+  { value: 'shop', label: '店铺资料', shortLabel: '店铺', color: '#7c3aed', description: '按站点同步妙手店铺和授权资料' }
+]
+const taskStatusOptions = [
+  { value: 'queued', label: '等待执行', type: 'info' },
+  { value: 'running', label: '运行中', type: 'primary' },
+  { value: 'success', label: '执行成功', type: 'success' },
+  { value: 'partial', label: '部分成功', type: 'warning' },
+  { value: 'failed', label: '执行失败', type: 'danger' },
+  { value: 'cancelled', label: '已取消', type: 'info' }
+]
+const triggerOptions = [
+  { value: 'schedule', label: '定时触发' },
+  { value: 'manual', label: '手动执行' },
+  { value: 'retry', label: '失败重试' }
+]
+const frequencyOptions = [
+  { value: '5m', label: '每 5 分钟', cron: '0 */5 * * * *' },
+  { value: '30m', label: '每 30 分钟', cron: '0 */30 * * * *' },
+  { value: '1h', label: '每小时', cron: '0 0 * * * *' },
+  { value: 'daily2', label: '每天凌晨 02:00', cron: '0 0 2 * * *' },
+  { value: 'daily8', label: '每天上午 08:00', cron: '0 0 8 * * *' }
+]
 
 export default {
   name: 'SyncTask',
@@ -264,19 +297,31 @@ export default {
     }
   },
   data() {
+    const taskSiteValidator = (rule, value, callback) => {
+      if (this.taskForm.taskType === 'shop' && (!value || !value.length)) callback(new Error('请选择至少一个站点'))
+      else callback()
+    }
+    const scheduleSiteValidator = (rule, value, callback) => {
+      if (this.scheduleForm.taskType === 'shop' && (!value || !value.length)) callback(new Error('请选择至少一个站点'))
+      else callback()
+    }
     return {
-      syncTasks: createMockSyncTasks(),
-      schedules: createMockSchedules(),
+      syncTasks: [],
+      taskTotal: 0,
+      schedules: [],
       frequencyOptions,
-      shopOptions,
+      shopOptions: [],
+      shops: [],
+      miaoshouConfigs: [],
       taskStatusOptions,
       taskTypeOptions,
       triggerOptions,
+      summary: { today: 0, running: 0, queued: 0, success: 0, issue: 0, records: 0, successRate: 100 },
       activeView: 'records',
       activeStatus: 'all',
       loading: false,
       saving: false,
-      lastRefresh: '2026-08-14 10:34:26',
+      lastRefresh: '',
       selectedIds: [],
       detailOpen: false,
       detailTask: null,
@@ -285,107 +330,101 @@ export default {
       scheduleDialogOpen: false,
       editingSchedule: null,
       scheduleForm: {},
-      timerHandles: {},
+      pollTimer: null,
       queryParams: { keyword: '', taskType: '', shopId: '', trigger: '', dateRange: [], pageIndex: 1, pageSize: 10 },
       taskRules: {
+        miaoshouConfigId: [{ required: true, message: '请选择妙手配置', trigger: 'change' }],
         taskType: [{ required: true, message: '请选择同步类型', trigger: 'change' }],
-        shopId: [{ required: true, message: '请选择目标店铺', trigger: 'change' }],
+        sites: [{ validator: taskSiteValidator, trigger: 'change' }],
         mode: [{ required: true, message: '请选择同步模式', trigger: 'change' }],
-        queueMode: [{ required: true, message: '请选择执行方式', trigger: 'change' }],
-        dateRange: [{ required: true, message: '请选择订单时间范围', trigger: 'change' }],
-        conflictPolicy: [{ required: true, message: '请选择冲突处理策略', trigger: 'change' }]
+        queueMode: [{ required: true, message: '请选择执行方式', trigger: 'change' }]
       },
       scheduleRules: {
         name: [{ required: true, message: '请输入策略名称', trigger: 'blur' }],
+        miaoshouConfigId: [{ required: true, message: '请选择妙手配置', trigger: 'change' }],
+        taskType: [{ required: true, message: '请选择同步类型', trigger: 'change' }],
+        sites: [{ validator: scheduleSiteValidator, trigger: 'change' }],
         frequency: [{ required: true, message: '请选择执行频率', trigger: 'change' }]
       }
     }
   },
   computed: {
-    summary() {
-      const todayTasks = this.syncTasks.filter(task => task.createdAt.startsWith('2026-08-14'))
-      const finished = todayTasks.filter(task => ['success', 'partial', 'failed'].includes(task.status))
-      const success = todayTasks.filter(task => task.status === 'success').length
-      return {
-        today: todayTasks.length,
-        running: this.syncTasks.filter(task => task.status === 'running').length,
-        queued: this.syncTasks.filter(task => task.status === 'queued').length,
-        success,
-        issue: this.syncTasks.filter(task => ['failed', 'partial'].includes(task.status)).length,
-        records: todayTasks.reduce((total, task) => total + task.successCount, 0),
-        successRate: finished.length ? (success / finished.length * 100).toFixed(1) : '100.0'
-      }
-    },
     statusTabs() {
-      const tabs = [{ value: 'all', label: '全部任务' }, ...this.taskStatusOptions]
-      return tabs.map(tab => ({ ...tab, count: tab.value === 'all' ? this.syncTasks.length : this.syncTasks.filter(task => task.status === tab.value).length }))
+      const countMap = {
+        all: this.taskTotal,
+        queued: this.summary.queued,
+        running: this.summary.running,
+        success: this.summary.success,
+        partial: this.syncTasks.filter(item => item.status === 'partial').length,
+        failed: this.summary.issue,
+        cancelled: this.syncTasks.filter(item => item.status === 'cancelled').length
+      }
+      return [{ value: 'all', label: '全部任务' }, ...this.taskStatusOptions].map(item => ({ ...item, count: countMap[item.value] || 0 }))
     },
-    filteredTasks() {
-      const keyword = this.queryParams.keyword.trim().toLowerCase()
-      const range = this.queryParams.dateRange || []
-      return this.syncTasks.filter(task => {
-        const keywordValues = [task.taskNo, task.taskName, task.shopName]
-        const matchKeyword = !keyword || keywordValues.some(value => value.toLowerCase().includes(keyword))
-        const createdDate = task.createdAt.slice(0, 10)
-        return matchKeyword &&
-          (this.activeStatus === 'all' || task.status === this.activeStatus) &&
-          (!this.queryParams.taskType || task.taskType === this.queryParams.taskType) &&
-          (!this.queryParams.shopId || task.shopId === this.queryParams.shopId) &&
-          (!this.queryParams.trigger || task.trigger === this.queryParams.trigger) &&
-          (!range.length || (createdDate >= range[0] && createdDate <= range[1]))
-      })
-    },
-    pagedTasks() {
-      const start = (this.queryParams.pageIndex - 1) * this.queryParams.pageSize
-      return this.filteredTasks.slice(start, start + this.queryParams.pageSize)
-    },
+    filteredTasks() { return this.syncTasks },
+    pagedTasks() { return this.syncTasks },
     retryableSelectedCount() {
       return this.syncTasks.filter(task => this.selectedIds.includes(task.id) && ['failed', 'partial', 'cancelled'].includes(task.status)).length
     },
-    enabledScheduleCount() { return this.schedules.filter(schedule => schedule.enabled).length }
+    enabledScheduleCount() { return this.schedules.filter(schedule => schedule.enabled).length },
+    taskShopOptions() { return this.shopOptions.filter(item => !this.taskForm.miaoshouConfigId || item.miaoshouConfigId === this.taskForm.miaoshouConfigId) },
+    scheduleShopOptions() { return this.shopOptions.filter(item => !this.scheduleForm.miaoshouConfigId || item.miaoshouConfigId === this.scheduleForm.miaoshouConfigId) },
+    siteOptions() {
+      const sites = new Map()
+      this.shops.forEach(shop => {
+        if (shop.siteCode) sites.set(shop.siteCode, shop.siteName || shop.siteCode)
+      })
+      return [...sites.entries()].map(([value, name]) => ({ value, label: name + '（' + value + '）' }))
+    }
   },
   watch: {
-    'queryParams.pageSize'() { this.queryParams.pageIndex = 1 },
-    filteredTasks() {
-      const maxPage = Math.max(1, Math.ceil(this.filteredTasks.length / this.queryParams.pageSize))
-      if (this.queryParams.pageIndex > maxPage) this.queryParams.pageIndex = maxPage
+    'queryParams.pageIndex'() { this.getTasks() },
+    'queryParams.pageSize'() {
+      if (this.queryParams.pageIndex !== 1) this.queryParams.pageIndex = 1
+      else this.getTasks()
     }
   },
   created() {
     this.taskForm = this.createEmptyTaskForm()
     this.scheduleForm = this.createEmptyScheduleForm()
+    Promise.allSettled([this.loadMiaoshouConfigs(), this.loadShops(), this.loadAllData()])
+    this.pollTimer = window.setInterval(() => this.pollData(), 3000)
   },
   beforeUnmount() {
-    Object.values(this.timerHandles).forEach(handle => window.clearInterval(handle))
+    if (this.pollTimer) window.clearInterval(this.pollTimer)
   },
   methods: {
     createEmptyTaskForm() {
-      return { taskType: '', shopId: '', mode: 'incremental', queueMode: 'immediate', dateRange: [], conflictPolicy: 'platformPriority', remark: '' }
+      return { taskType: 'package', miaoshouConfigId: undefined, shopIds: [], sites: [], mode: 'incremental', queueMode: 'immediate', dateRange: [], remark: '' }
     },
     createEmptyScheduleForm() {
-      return { name: '', frequency: '30m', misfirePolicy: 'once', concurrent: 'forbid', enabled: true }
+      return { name: '', taskType: 'package', miaoshouConfigId: undefined, shopIds: [], sites: [], mode: 'incremental', frequency: '30m', misfirePolicy: 'once', concurrent: 'forbid', enabled: true, description: '' }
     },
-    nowText() {
-      const now = new Date()
-      const pad = value => String(value).padStart(2, '0')
-      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    nowText() { return this.formatTime(new Date()) },
+    formatTime(value) {
+      if (!value) return ''
+      const date = value instanceof Date ? value : new Date(value)
+      if (Number.isNaN(date.getTime())) return String(value).replace('T', ' ').slice(0, 19)
+      const pad = item => String(item).padStart(2, '0')
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds())
     },
+    disableFutureDate(value) { return value.getTime() > Date.now() },
     taskTypeMeta(type) { return this.taskTypeOptions.find(item => item.value === type) || { label: type, color: '#64748b' } },
-    statusMeta(status) { return this.taskStatusOptions.find(item => item.value === status) || { label: status, type: 'info' } },
+    statusMeta(status) { return this.taskStatusOptions.find(item => item.value === status) || { label: status || '未知', type: 'info' } },
     frequencyMeta(frequency) { return this.frequencyOptions.find(item => item.value === frequency) || { label: frequency, cron: '' } },
     triggerLabel(trigger) { return (this.triggerOptions.find(item => item.value === trigger) || {}).label || trigger },
     formatNumber(value) { return Number(value || 0).toLocaleString('zh-CN') },
     formatDuration(seconds, status) {
       if (status === 'queued') return '等待中'
       if (!seconds) return '—'
-      if (seconds < 60) return `${seconds}s`
-      return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+      if (seconds < 60) return seconds + 's'
+      return Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's'
     },
     progressText(task) {
       if (task.status === 'queued') return '等待调度资源'
-      if (task.status === 'running') return `已处理 ${this.formatNumber(task.successCount + task.failedCount + task.skippedCount)} / ${this.formatNumber(task.totalCount)}`
+      if (task.status === 'running') return '已处理 ' + this.formatNumber(task.successCount + task.failedCount + task.skippedCount) + ' / ' + this.formatNumber(task.totalCount)
       if (task.status === 'cancelled') return '执行已中止'
-      return `共处理 ${this.formatNumber(task.totalCount)} 条`
+      return '共处理 ' + this.formatNumber(task.totalCount) + ' 条'
     },
     progressStatus(status) {
       if (status === 'success') return 'success'
@@ -394,226 +433,271 @@ export default {
       return undefined
     },
     stepStatusLabel(status) { return { pending: '等待', process: '进行中', success: '完成', error: '失败' }[status] },
-    handleViewChange() { this.selectedIds = [] },
-    handleStatusTab() { this.queryParams.pageIndex = 1 },
-    handleQuery() { this.queryParams.pageIndex = 1 },
-    resetQuery() {
-      this.$refs.queryForm?.resetFields()
-      this.activeStatus = 'all'
-      this.queryParams.pageIndex = 1
+    buildRuntimeSteps(status, progress) {
+      const definitions = [
+        ['校验任务参数', '读取妙手配置并验证同步范围'],
+        ['调用妙手接口', '按页拉取包裹或店铺数据'],
+        ['幂等写入数据', '识别新增、更新与未变化记录'],
+        ['汇总执行结果', '持久化统计、错误和关联记录']
+      ]
+      return definitions.map((definition, index) => {
+        const completed = Math.floor(Number(progress || 0) / 25)
+        let stepStatus = status === 'success' || status === 'partial' ? 'success' : index < completed ? 'success' : index === completed && status === 'running' ? 'process' : 'pending'
+        if (status === 'failed' && index === Math.min(completed, 3)) stepStatus = 'error'
+        return { title: definition[0], description: definition[1], status: stepStatus }
+      })
     },
-    refreshTasks() {
+    mapTask(row) {
+      const params = row.params || {}
+      const dateRange = [params.gmtModifiedFrom, params.gmtModifiedTo].filter(Boolean)
+      const createdAt = this.formatTime(row.createdAt)
+      const startedAt = this.formatTime(row.startedAt)
+      const finishedAt = this.formatTime(row.finishedAt)
+      const logs = [{ time: createdAt.slice(11), level: 'INFO', message: '任务已写入持久化队列' }]
+      if (startedAt) logs.push({ time: startedAt.slice(11), level: 'INFO', message: '后台执行器已领取任务并开始同步' })
+      if (finishedAt) {
+        const level = row.status === 'success' ? 'SUCCESS' : row.status === 'partial' ? 'WARN' : row.status === 'cancelled' ? 'WARN' : 'ERROR'
+        logs.push({ time: finishedAt.slice(11), level, message: row.errorMessage || ('任务执行结束，状态：' + this.statusMeta(row.status).label) })
+      }
+      const shopIDs = row.shopIds || params.shopIds || []
+      return {
+        ...row,
+        shopId: shopIDs.length === 1 ? String(shopIDs[0]) : '',
+        shopName: row.targetName || '全部启用店铺',
+        siteCode: row.siteCode || 'ALL',
+        siteName: row.siteName || '多站点',
+        trigger: row.triggerType || 'manual',
+        createdAt,
+        startedAt,
+        finishedAt,
+        errorSummary: row.errorMessage || '',
+        params: { ...params, dateRange, conflictPolicy: 'platformPriority' },
+        steps: this.buildRuntimeSteps(row.status, row.progress),
+        logs,
+        failures: []
+      }
+    },
+    mapSchedule(row) {
+      return {
+        ...row,
+        enabled: Number(row.enabled) === 1,
+        scope: row.scopeName || '全部启用店铺',
+        lastRun: this.formatTime(row.lastRunAt) || '尚未执行',
+        nextRun: Number(row.enabled) === 1 ? (this.formatTime(row.nextRunAt) || '等待调度计算') : '已暂停',
+        lastStatus: row.lastStatus || 'queued',
+        successRate: Number(row.successRate == null ? 100 : row.successRate)
+      }
+    },
+    getTasks() {
       this.loading = true
-      window.setTimeout(() => {
+      const range = this.queryParams.dateRange || []
+      return listCrossBorderSyncTasks({
+        keyword: this.queryParams.keyword || undefined,
+        taskType: this.queryParams.taskType || undefined,
+        status: this.activeStatus === 'all' ? undefined : this.activeStatus,
+        triggerType: this.queryParams.trigger || undefined,
+        shopId: this.queryParams.shopId || undefined,
+        createdFrom: range[0],
+        createdTo: range[1],
+        pageIndex: this.queryParams.pageIndex,
+        pageSize: this.queryParams.pageSize
+      }).then(response => {
+        this.syncTasks = (response.data.list || []).map(this.mapTask)
+        this.taskTotal = response.data.count || 0
+        if (this.detailTask) {
+          const current = this.syncTasks.find(item => item.id === this.detailTask.id)
+          if (current) this.detailTask = current
+        }
         this.lastRefresh = this.nowText()
-        this.loading = false
-        this.msgSuccess('同步任务数据已刷新（模拟）')
-      }, 420)
+      }).finally(() => { this.loading = false })
     },
+    getSummary() {
+      return getCrossBorderSyncTaskSummary().then(response => { this.summary = { ...this.summary, ...(response.data || {}) } })
+    },
+    getSchedules() {
+      return listCrossBorderSyncSchedules().then(response => { this.schedules = (response.data || []).map(this.mapSchedule) })
+    },
+    loadAllData() { return Promise.all([this.getTasks(), this.getSummary(), this.getSchedules()]) },
+    pollData() {
+      if (document.hidden) return
+      const calls = [this.getTasks(), this.getSummary()]
+      if (this.activeView === 'schedules') calls.push(this.getSchedules())
+      Promise.allSettled(calls)
+    },
+    loadMiaoshouConfigs() {
+      return listMiaoshouConfig({ pageIndex: 1, pageSize: 100, status: 1 }).then(response => {
+        this.miaoshouConfigs = response.data.list || []
+        const first = this.miaoshouConfigs[0]
+        if (first) {
+          if (!this.taskForm.miaoshouConfigId) this.taskForm.miaoshouConfigId = first.id
+          if (!this.scheduleForm.miaoshouConfigId) this.scheduleForm.miaoshouConfigId = first.id
+        }
+      })
+    },
+    loadShops() {
+      return listCrossBorderShops({ pageIndex: 1, pageSize: 200, localStatus: 1 }).then(response => {
+        this.shops = response.data.list || []
+        this.shopOptions = this.shops.map(shop => ({
+          value: String(shop.remoteShopId),
+          label: (shop.shopName || shop.platformShopName || shop.shopNick || ('店铺 ' + shop.remoteShopId)) + ' · ' + (shop.siteCode || '-'),
+          siteCode: shop.siteCode,
+          siteName: shop.siteName,
+          miaoshouConfigId: shop.miaoshouConfigId
+        }))
+      })
+    },
+    handleTaskConfigChange() { this.taskForm.shopIds = [] },
+    handleViewChange(name) {
+      this.selectedIds = []
+      if (name === 'schedules') this.getSchedules()
+    },
+    handleStatusTab() { this.queryParams.pageIndex = 1; this.getTasks() },
+    handleQuery() { this.queryParams.pageIndex = 1; this.getTasks() },
+    resetQuery() {
+      const pageSize = this.queryParams.pageSize
+      this.queryParams = { keyword: '', taskType: '', shopId: '', trigger: '', dateRange: [], pageIndex: 1, pageSize }
+      this.activeStatus = 'all'
+      this.getTasks()
+    },
+    refreshTasks() { return this.loadAllData().then(() => this.msgSuccess('同步任务数据已刷新')) },
     handleSelectionChange(rows) { this.selectedIds = rows.map(row => row.id) },
-    openDetail(task) { this.detailTask = task; this.detailOpen = true },
+    openDetail(task) {
+      this.detailTask = task
+      this.detailOpen = true
+      getCrossBorderSyncTask(task.id).then(response => { this.detailTask = this.mapTask(response.data || task) })
+    },
     openCreateTask() {
       this.taskForm = this.createEmptyTaskForm()
+      if (this.miaoshouConfigs.length) this.taskForm.miaoshouConfigId = this.miaoshouConfigs[0].id
       this.taskDialogOpen = true
       this.$nextTick(() => this.$refs.taskForm?.clearValidate())
+    },
+    normalizedTaskRange() {
+      const range = this.taskForm.dateRange || []
+      if (range.length !== 2) return []
+      const now = new Date()
+      const end = new Date(range[1].replace(' ', 'T'))
+      return [range[0], end > now ? this.formatTime(now) : range[1]]
     },
     submitTask() {
       this.$refs.taskForm.validate(valid => {
         if (!valid) return
+        const range = this.normalizedTaskRange()
+        const payload = {
+          taskType: this.taskForm.taskType,
+          miaoshouConfigId: this.taskForm.miaoshouConfigId,
+          platform: 'tiktok',
+          shopIds: ['package', 'tracking'].includes(this.taskForm.taskType) ? this.taskForm.shopIds.map(Number) : [],
+          sites: this.taskForm.taskType === 'shop' ? this.taskForm.sites : [],
+          mode: this.taskForm.mode,
+          queueMode: this.taskForm.queueMode,
+          gmtModifiedFrom: range[0] || '',
+          gmtModifiedTo: range[1] || '',
+          remark: this.taskForm.remark
+        }
         this.saving = true
-        window.setTimeout(() => {
-          const task = this.createTaskRecord({
-            taskType: this.taskForm.taskType,
-            shopId: this.taskForm.shopId,
-            mode: this.taskForm.mode,
-            trigger: 'manual',
-            remark: this.taskForm.remark,
-            dateRange: this.taskForm.dateRange,
-            conflictPolicy: this.taskForm.conflictPolicy
-          })
-          this.syncTasks.unshift(task)
+        createCrossBorderSyncTask(payload).then(() => {
           this.taskDialogOpen = false
-          this.saving = false
           this.activeView = 'records'
           this.activeStatus = 'all'
-          if (this.taskForm.queueMode === 'immediate') this.startTask(task)
-          this.msgSuccess(this.taskForm.queueMode === 'immediate' ? '同步任务已创建并开始执行（模拟）' : '同步任务已加入等待队列（模拟）')
-        }, 420)
+          this.queryParams.pageIndex = 1
+          return Promise.all([this.getTasks(), this.getSummary()])
+        }).then(() => this.msgSuccess('同步任务已进入后台队列')).finally(() => { this.saving = false })
       })
-    },
-    createTaskRecord(options) {
-      const type = this.taskTypeMeta(options.taskType)
-      const shop = options.shopId === 'all'
-        ? { value: 'all', label: '全部启用店铺', siteCode: 'ALL', siteName: '多站点' }
-        : this.shopOptions.find(item => item.value === options.shopId)
-      const now = this.nowText()
-      const id = Math.max(...this.syncTasks.map(task => task.id), 5000) + 1
-      const totalCount = options.taskType === 'auth' ? this.shopOptions.length : 480 + id % 900
-      return {
-        id,
-        taskNo: `SYNC${now.slice(2, 10).replace(/-/g, '')}${String(id).slice(-4)}`,
-        taskName: `${type.label}同步 · ${shop.label}`,
-        taskType: options.taskType,
-        shopId: shop.value,
-        shopName: shop.label,
-        siteCode: shop.siteCode,
-        siteName: shop.siteName,
-        mode: options.mode || 'incremental',
-        trigger: options.trigger || 'manual',
-        status: 'queued',
-        progress: 0,
-        totalCount,
-        successCount: 0,
-        skippedCount: 0,
-        failedCount: 0,
-        createdAt: now,
-        startedAt: '',
-        finishedAt: '',
-        durationSeconds: 0,
-        operator: options.trigger === 'schedule' ? '系统调度' : '当前用户',
-        retryOf: options.retryOf || '',
-        errorSummary: '',
-        remark: options.remark || '',
-        params: { dateRange: options.dateRange || [], conflictPolicy: options.conflictPolicy || 'platformPriority', cursor: options.mode === 'full' ? '' : `cursor_${Date.now()}` },
-        steps: this.buildRuntimeSteps('queued', 0),
-        logs: [{ time: now.slice(11), level: 'INFO', message: '任务已创建，等待调度资源' }],
-        failures: []
-      }
-    },
-    buildRuntimeSteps(status, progress) {
-      const definitions = [
-        ['连接 TikTok Shop', '验证店铺授权并建立 API 会话'],
-        ['读取平台数据', '按同步游标分批获取数据'],
-        ['解析与校验', '校验字段并识别新增或变更记录'],
-        ['写入本地系统', '幂等更新业务数据并汇总结果']
-      ]
-      return definitions.map((definition, index) => {
-        const completedSteps = Math.floor(progress / 25)
-        let stepStatus = status === 'success' ? 'success' : index < completedSteps ? 'success' : index === completedSteps && status === 'running' ? 'process' : 'pending'
-        if (status === 'failed' && index === completedSteps) stepStatus = 'error'
-        return { title: definition[0], description: definition[1], status: stepStatus }
-      })
-    },
-    startTask(task) {
-      if (this.timerHandles[task.id]) window.clearInterval(this.timerHandles[task.id])
-      const now = this.nowText()
-      task.status = 'running'
-      task.startedAt = now
-      task.finishedAt = ''
-      task.progress = Math.max(task.progress, 6)
-      task.steps = this.buildRuntimeSteps('running', task.progress)
-      task.logs.push({ time: now.slice(11), level: 'INFO', message: '调度资源已就绪，开始连接 TikTok Shop' })
-      const startedAt = Date.now()
-      this.timerHandles[task.id] = window.setInterval(() => {
-        task.progress = Math.min(100, task.progress + 9 + task.id % 8)
-        const processed = Math.round(task.totalCount * task.progress / 100)
-        task.skippedCount = Math.floor(processed * 0.012)
-        task.successCount = Math.max(0, processed - task.skippedCount)
-        task.durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-        task.steps = this.buildRuntimeSteps('running', task.progress)
-        if (task.progress >= 100) {
-          window.clearInterval(this.timerHandles[task.id])
-          delete this.timerHandles[task.id]
-          task.status = 'success'
-          task.finishedAt = this.nowText()
-          task.steps = this.buildRuntimeSteps('success', 100)
-          task.logs.push({ time: task.finishedAt.slice(11), level: 'SUCCESS', message: `同步完成，成功处理 ${task.successCount} 条数据` })
-          if (task.scheduleId) {
-            const schedule = this.schedules.find(item => item.id === task.scheduleId)
-            if (schedule) {
-              schedule.lastRun = task.finishedAt
-              schedule.lastStatus = 'success'
-              schedule.nextRun = '等待下一次调度'
-            }
-          }
-          this.lastRefresh = task.finishedAt
-        }
-      }, 650)
     },
     retryTask(task) {
       this.detailOpen = false
-      ElMessageBox.confirm(`确认重试任务“${task.taskName}”吗？系统将创建一条新的执行记录。`, '重试同步任务', { confirmButtonText: '开始重试', cancelButtonText: '取消', type: 'warning' })
-        .then(() => {
-          const retry = this.createTaskRecord({ taskType: task.taskType, shopId: task.shopId, mode: task.mode, trigger: 'retry', retryOf: task.taskNo, remark: task.remark, dateRange: task.params.dateRange, conflictPolicy: task.params.conflictPolicy })
-          retry.taskName = task.taskName
-          this.syncTasks.unshift(retry)
-          this.startTask(retry)
-          this.msgSuccess('重试任务已开始执行（模拟）')
-        }).catch(() => {})
+      ElMessageBox.confirm('确认重试任务“' + task.taskName + '”吗？系统将创建一条新的执行记录。', '重试同步任务', { confirmButtonText: '开始重试', cancelButtonText: '取消', type: 'warning' })
+        .then(() => retryCrossBorderSyncTask(task.id))
+        .then(() => this.loadAllData())
+        .then(() => this.msgSuccess('重试任务已进入后台队列'))
+        .catch(() => {})
     },
     runAgain(task) {
-      const rerun = this.createTaskRecord({ taskType: task.taskType, shopId: task.shopId, mode: task.mode, trigger: 'manual', remark: task.remark, dateRange: task.params.dateRange, conflictPolicy: task.params.conflictPolicy })
-      rerun.taskName = task.taskName
-      this.syncTasks.unshift(rerun)
-      this.detailOpen = false
-      this.startTask(rerun)
-      this.msgSuccess('任务已再次执行（模拟）')
+      runCrossBorderSyncTaskAgain(task.id).then(() => {
+        this.detailOpen = false
+        return this.loadAllData()
+      }).then(() => this.msgSuccess('任务已再次进入后台队列'))
     },
     cancelTask(task) {
       this.detailOpen = false
-      ElMessageBox.confirm(`确认取消任务“${task.taskName}”吗？已写入的数据不会回滚。`, '取消同步任务', { confirmButtonText: '确认取消', cancelButtonText: '返回', type: 'warning' })
-        .then(() => {
-          if (this.timerHandles[task.id]) {
-            window.clearInterval(this.timerHandles[task.id])
-            delete this.timerHandles[task.id]
-          }
-          task.status = 'cancelled'
-          task.finishedAt = this.nowText()
-          task.logs.push({ time: task.finishedAt.slice(11), level: 'WARN', message: '任务已由运营人员手动取消' })
-          this.msgSuccess('同步任务已取消（模拟）')
-        }).catch(() => {})
+      ElMessageBox.confirm('确认取消任务“' + task.taskName + '”吗？已写入的数据不会回滚。', '取消同步任务', { confirmButtonText: '确认取消', cancelButtonText: '返回', type: 'warning' })
+        .then(() => cancelCrossBorderSyncTask(task.id))
+        .then(() => this.loadAllData())
+        .then(() => this.msgSuccess('取消请求已提交'))
+        .catch(() => {})
     },
     batchRetry() {
       const selected = this.syncTasks.filter(task => this.selectedIds.includes(task.id) && ['failed', 'partial', 'cancelled'].includes(task.status))
       if (!selected.length) return
-      ElMessageBox.confirm(`确认重试选中的 ${selected.length} 条异常任务吗？`, '批量重试', { confirmButtonText: '开始重试', cancelButtonText: '取消', type: 'warning' })
-        .then(() => {
-          selected.forEach(task => {
-            const retry = this.createTaskRecord({ taskType: task.taskType, shopId: task.shopId, mode: task.mode, trigger: 'retry', retryOf: task.taskNo, remark: task.remark, dateRange: task.params.dateRange, conflictPolicy: task.params.conflictPolicy })
-            retry.taskName = task.taskName
-            this.syncTasks.unshift(retry)
-            this.startTask(retry)
-          })
-          this.msgSuccess(`已创建 ${selected.length} 条重试任务（模拟）`)
-        }).catch(() => {})
+      ElMessageBox.confirm('确认重试选中的 ' + selected.length + ' 条异常任务吗？', '批量重试', { confirmButtonText: '开始重试', cancelButtonText: '取消', type: 'warning' })
+        .then(() => Promise.all(selected.map(task => retryCrossBorderSyncTask(task.id))))
+        .then(() => this.loadAllData())
+        .then(() => this.msgSuccess('已创建 ' + selected.length + ' 条重试任务'))
+        .catch(() => {})
     },
     runSchedule(schedule) {
-      const task = this.createTaskRecord({ taskType: schedule.taskType, shopId: 'all', mode: schedule.taskType === 'product' ? 'full' : 'incremental', trigger: 'manual', remark: `从定时策略“${schedule.name}”手动触发` })
-      task.taskName = `${schedule.name} · 手动触发`
-      task.scheduleId = schedule.id
-      this.syncTasks.unshift(task)
-      this.startTask(task)
-      schedule.lastRun = task.startedAt
-      schedule.lastStatus = 'running'
-      this.activeView = 'records'
-      this.activeStatus = 'all'
-      this.msgSuccess('定时策略已手动触发（模拟）')
+      runCrossBorderSyncSchedule(schedule.id).then(() => {
+        this.activeView = 'records'
+        this.activeStatus = 'all'
+        return this.loadAllData()
+      }).then(() => this.msgSuccess('定时策略已手动触发'))
     },
     toggleSchedule(schedule) {
       const action = schedule.enabled ? '暂停' : '恢复'
-      ElMessageBox.confirm(`确认${action}定时策略“${schedule.name}”吗？`, `${action}定时策略`, { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: schedule.enabled ? 'warning' : 'info' })
-        .then(() => {
-          schedule.enabled = !schedule.enabled
-          schedule.nextRun = schedule.enabled ? '等待调度计算' : '已暂停'
-          this.msgSuccess(`定时策略已${action}（模拟）`)
-        }).catch(() => {})
+      ElMessageBox.confirm('确认' + action + '定时策略“' + schedule.name + '”吗？', action + '定时策略', { confirmButtonText: '确认' + action, cancelButtonText: '取消', type: schedule.enabled ? 'warning' : 'info' })
+        .then(() => toggleCrossBorderSyncSchedule(schedule.id, !schedule.enabled))
+        .then(() => this.getSchedules())
+        .then(() => this.msgSuccess('定时策略已' + action))
+        .catch(() => {})
     },
     openScheduleEditor(schedule) {
       this.editingSchedule = schedule
-      this.scheduleForm = { name: schedule.name, frequency: schedule.frequency, misfirePolicy: 'once', concurrent: 'forbid', enabled: schedule.enabled }
+      this.scheduleForm = schedule ? {
+        name: schedule.name,
+        description: schedule.description || '',
+        taskType: schedule.taskType,
+        miaoshouConfigId: schedule.miaoshouConfigId,
+        shopIds: schedule.shopIds || [],
+        sites: schedule.sites || [],
+        mode: schedule.mode || 'incremental',
+        frequency: schedule.frequency,
+        misfirePolicy: schedule.misfirePolicy || 'once',
+        concurrent: schedule.concurrentPolicy || 'forbid',
+        enabled: schedule.enabled
+      } : this.createEmptyScheduleForm()
+      if (!this.scheduleForm.miaoshouConfigId && this.miaoshouConfigs.length) this.scheduleForm.miaoshouConfigId = this.miaoshouConfigs[0].id
       this.scheduleDialogOpen = true
       this.$nextTick(() => this.$refs.scheduleForm?.clearValidate())
     },
     submitSchedule() {
       this.$refs.scheduleForm.validate(valid => {
         if (!valid) return
+        const frequency = this.frequencyMeta(this.scheduleForm.frequency)
+        const payload = {
+          name: this.scheduleForm.name,
+          description: this.scheduleForm.description || (this.taskTypeMeta(this.scheduleForm.taskType).label + '自动同步'),
+          taskType: this.scheduleForm.taskType,
+          miaoshouConfigId: this.scheduleForm.miaoshouConfigId,
+          platform: 'tiktok',
+          shopIds: ['package', 'tracking'].includes(this.scheduleForm.taskType) ? this.scheduleForm.shopIds.map(Number) : [],
+          sites: this.scheduleForm.taskType === 'shop' ? this.scheduleForm.sites : [],
+          mode: this.scheduleForm.mode,
+          frequency: this.scheduleForm.frequency,
+          cronExpression: frequency.cron,
+          timezone: 'Asia/Shanghai',
+          enabled: this.scheduleForm.enabled,
+          misfirePolicy: this.scheduleForm.misfirePolicy,
+          concurrentPolicy: this.scheduleForm.concurrent
+        }
         this.saving = true
-        window.setTimeout(() => {
-          Object.assign(this.editingSchedule, { name: this.scheduleForm.name, frequency: this.scheduleForm.frequency, enabled: this.scheduleForm.enabled, nextRun: this.scheduleForm.enabled ? '等待调度计算' : '已暂停' })
-          this.saving = false
+        const request = this.editingSchedule
+          ? updateCrossBorderSyncSchedule(this.editingSchedule.id, payload)
+          : createCrossBorderSyncSchedule(payload)
+        request.then(() => {
           this.scheduleDialogOpen = false
-          this.msgSuccess('定时策略已更新（模拟）')
-        }, 420)
+          return this.getSchedules()
+        }).then(() => this.msgSuccess(this.editingSchedule ? '定时策略已更新' : '定时策略已创建')).finally(() => { this.saving = false })
       })
     },
     copyError(text) {
@@ -625,21 +709,21 @@ export default {
       if (!selected.length) return
       const rows = selected.map(task => [task.taskNo, task.taskName, this.taskTypeMeta(task.taskType).label, task.shopName, this.triggerLabel(task.trigger), this.statusMeta(task.status).label, task.totalCount, task.successCount, task.failedCount, task.createdAt, task.finishedAt])
       this.downloadCsv('同步任务执行记录', ['任务编号', '任务名称', '同步类型', '店铺', '触发方式', '状态', '总数', '成功', '失败', '创建时间', '结束时间'], rows)
-      this.msgSuccess(`已导出 ${selected.length} 条任务记录`)
+      this.msgSuccess('已导出 ' + selected.length + ' 条任务记录')
     },
     exportFailures(task) {
       const rows = task.failures.map(item => [item.rowNo, item.entityId, item.reason])
-      this.downloadCsv(`${task.taskNo}_失败记录`, ['序号', '数据标识', '失败原因'], rows)
-      this.msgSuccess(`已导出 ${rows.length} 条失败记录`)
+      this.downloadCsv(task.taskNo + '_失败记录', ['序号', '数据标识', '失败原因'], rows)
+      this.msgSuccess('已导出 ' + rows.length + ' 条失败记录')
     },
     downloadCsv(name, headers, rows) {
-      const escapeCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`
+      const escapeCell = value => '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"'
       const csv = [headers, ...rows].map(row => row.map(escapeCell).join(',')).join('\n')
-      const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${name}_${this.nowText().slice(0, 10)}.csv`
+      link.download = name + '_' + this.nowText().slice(0, 10) + '.csv'
       link.click()
       URL.revokeObjectURL(url)
     }

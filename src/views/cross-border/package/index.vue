@@ -241,6 +241,40 @@
                     <div><span>尾程物流状态</span><strong>{{ detailPackage.lastMileStatus || '-' }}</strong></div>
                   </div>
                 </section>
+                <section class="detail-section tracking-section">
+                  <div class="tracking-title">
+                    <h3><el-icon><Position /></el-icon>物流轨迹</h3>
+                    <el-button
+                      v-permisaction="['admin:crossBorder:package:sync']"
+                      type="primary"
+                      link
+                      :icon="Refresh"
+                      :loading="trackingRefreshing"
+                      @click="refreshTracking(true)"
+                    >刷新轨迹</el-button>
+                  </div>
+                  <div class="tracking-meta">
+                    <span>运单号：{{ trackingData.logisticsNo || detailPackage.logisticsNo || '-' }}</span>
+                    <span>最近同步：{{ formatTime(trackingData.trackingSyncedAt) }}</span>
+                  </div>
+                  <el-alert v-if="trackingData.refreshWarning" :title="trackingData.refreshWarning" type="warning" :closable="false" show-icon class="tracking-alert" />
+                  <div v-loading="trackingLoading" class="tracking-content">
+                    <el-timeline v-if="trackingEvents.length">
+                      <el-timeline-item
+                        v-for="(event, index) in trackingEvents"
+                        :key="event.id || `${event.gmtCreate}-${index}`"
+                        :timestamp="formatTime(event.occurredAt || event.gmtCreate)"
+                        :type="index === 0 ? 'primary' : ''"
+                        :hollow="index !== 0"
+                        placement="top"
+                      >
+                        <strong>{{ event.descriptionCn || event.description || '物流状态更新' }}</strong>
+                        <p v-if="event.description && event.description !== event.descriptionCn">{{ event.description }}</p>
+                      </el-timeline-item>
+                    </el-timeline>
+                    <el-empty v-else description="暂无物流轨迹" :image-size="62" />
+                  </div>
+                </section>
                 <section class="detail-section">
                   <h3><el-icon><Clock /></el-icon>关键时间</h3>
                   <div class="detail-grid">
@@ -269,7 +303,7 @@
               <el-col :span="24"><el-form-item label="店铺范围"><el-select v-model="syncForm.shopIds" multiple collapse-tags collapse-tags-tooltip clearable filterable placeholder="不选择表示全部店铺" style="width: 100%"><el-option v-for="shop in syncShopOptions" :key="shop.remoteShopId" :label="`${shop.shopName}（${shop.siteCode}）`" :value="shop.remoteShopId" /></el-select></el-form-item></el-col>
               <el-col :xs="24" :sm="12"><el-form-item label="包裹状态"><el-select v-model="syncForm.appPackageStatus" clearable placeholder="全部状态" style="width: 100%"><el-option v-for="option in packageStatusOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select></el-form-item></el-col>
               <el-col :xs="24" :sm="12"><el-form-item label="平台订单号"><el-input v-model="syncForm.platformOrderSns" placeholder="多个订单号使用英文逗号分隔" /></el-form-item></el-col>
-              <el-col :span="24"><el-form-item label="妙手修改时间"><el-date-picker v-model="syncForm.modifiedRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" style="width: 100%" /></el-form-item></el-col>
+              <el-col :span="24"><el-form-item label="妙手修改时间"><el-date-picker v-model="syncForm.modifiedRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss" :default-time="syncDefaultTimes" :disabled-date="disabledFutureDate" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" style="width: 100%" /></el-form-item></el-col>
             </el-row>
           </el-form>
           <template #footer><el-button @click="syncOpen = false">取消</el-button><el-button type="primary" :loading="syncing" @click="submitSync">开始同步</el-button></template>
@@ -299,7 +333,7 @@
 import { Box, CircleCheck, Clock, Close, Download, Goods, Position, Refresh, RefreshLeft, Search, Shop, Tickets, Van, View, WarningFilled } from '@element-plus/icons-vue'
 import { listMiaoshouConfig } from '@/api/admin/miaoshou-config'
 import { listCrossBorderShops } from '@/api/cross-border/shop'
-import { getCrossBorderPackage, getCrossBorderPackageSummary, listCrossBorderPackages, listCrossBorderPackageSyncRecords, syncCrossBorderPackages } from '@/api/cross-border/package'
+import { getCrossBorderPackage, getCrossBorderPackageSummary, getCrossBorderPackageTracking, listCrossBorderPackages, listCrossBorderPackageSyncRecords, refreshCrossBorderPackageTracking, syncCrossBorderPackages } from '@/api/cross-border/package'
 
 const packageStatusOptions = [
   { value: 'unpaid', label: '未付款', type: 'info' },
@@ -338,9 +372,13 @@ export default {
       detailOpen: false,
       detailLoading: false,
       detailPackage: null,
+      trackingLoading: false,
+      trackingRefreshing: false,
+      trackingData: { trackingInfoList: [], trackingSyncedAt: null, logisticsNo: '', refreshWarning: '' },
       syncOpen: false,
       syncing: false,
       syncForm: { miaoshouConfigId: undefined, platform: 'tiktok', shopIds: [], appPackageStatus: '', platformOrderSns: '', modifiedRange: [] },
+      syncDefaultTimes: [new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)],
       syncRules: {
         miaoshouConfigId: [{ required: true, message: '请选择妙手配置', trigger: 'change' }],
         platform: [{ required: true, message: '请输入平台编码', trigger: 'blur' }]
@@ -371,6 +409,9 @@ export default {
     syncShopOptions() {
       if (!this.syncForm.miaoshouConfigId) return this.shops
       return this.shops.filter(shop => shop.miaoshouConfigId === this.syncForm.miaoshouConfigId)
+    },
+    trackingEvents() {
+      return this.trackingData.trackingInfoList || []
     }
   },
   created() {
@@ -453,7 +494,9 @@ export default {
     openDetail(packageItem) {
       this.detailOpen = true
       this.detailPackage = packageItem
+      this.trackingData = { trackingInfoList: [], trackingSyncedAt: null, logisticsNo: '', refreshWarning: '' }
       this.loadPackageDetail(packageItem.id, false)
+      this.loadTracking(packageItem.id, true)
     },
     loadPackageDetail(id, showMessage) {
       this.detailLoading = true
@@ -476,6 +519,28 @@ export default {
       if (!this.detailPackage || !this.detailPackage.id) return
       this.loadPackageDetail(this.detailPackage.id, true)
     },
+    loadTracking(id, autoRefresh) {
+      this.trackingLoading = true
+      return getCrossBorderPackageTracking(id).then(response => {
+        if (!this.detailPackage || this.detailPackage.id !== id) return
+        this.trackingData = response.data || { trackingInfoList: [] }
+        if (autoRefresh && !this.trackingData.trackingSyncedAt) return this.refreshTracking(false)
+      }).finally(() => { this.trackingLoading = false })
+    },
+    refreshTracking(showMessage) {
+      if (!this.detailPackage || !this.detailPackage.id) return Promise.resolve()
+      const packageId = this.detailPackage.id
+      this.trackingRefreshing = true
+      return refreshCrossBorderPackageTracking(packageId).then(response => {
+        if (!this.detailPackage || this.detailPackage.id !== packageId) return
+        this.trackingData = response.data || { trackingInfoList: [] }
+        if (showMessage) {
+          this.trackingData.remoteRefreshed
+            ? this.msgSuccess('物流轨迹已从妙手刷新')
+            : this.msgError(this.trackingData.refreshWarning || '未能获取最新物流轨迹')
+        }
+      }).finally(() => { this.trackingRefreshing = false })
+    },
     openSync() {
       if (!this.miaoshouConfigs.length) { this.msgError('没有已启用的妙手配置'); return }
       this.syncForm = { ...this.syncForm, miaoshouConfigId: this.syncForm.miaoshouConfigId || this.miaoshouConfigs[0].id, platform: 'tiktok', shopIds: [], appPackageStatus: '', platformOrderSns: '', modifiedRange: [] }
@@ -483,25 +548,62 @@ export default {
       this.$nextTick(() => this.$refs.syncFormRef?.clearValidate())
     },
     handleSyncConfigChange() { this.syncForm.shopIds = [] },
+    disabledFutureDate(date) { return date.getTime() > Date.now() },
+    parseLocalDateTime(value) {
+      if (!value) return null
+      const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/)
+      if (!match) return null
+      const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]))
+      return Number.isNaN(date.getTime()) ? null : date
+    },
+    formatLocalDateTime(date) {
+      const pad = value => String(value).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+    normalizeSyncModifiedRange(range) {
+      if (!range || !range.length) return { from: '', to: '' }
+      if (range.length !== 2) { this.msgError('请选择完整的妙手修改时间范围'); return null }
+      const from = this.parseLocalDateTime(range[0])
+      let to = this.parseLocalDateTime(range[1])
+      if (!from || !to) { this.msgError('妙手修改时间格式无效'); return null }
+
+      const now = new Date()
+      const sameInstant = from.getTime() === to.getTime()
+      const startsAtMidnight = from.getHours() === 0 && from.getMinutes() === 0 && from.getSeconds() === 0
+      if (sameInstant && startsAtMidnight) {
+        to = new Date(from)
+        to.setHours(23, 59, 59, 0)
+      }
+      if (to.getTime() > now.getTime()) to = now
+      if (from.getTime() > now.getTime()) { this.msgError('妙手修改开始时间不能晚于当前时间'); return null }
+      if (from.getTime() >= to.getTime()) { this.msgError('妙手修改结束时间必须晚于开始时间'); return null }
+      return { from: this.formatLocalDateTime(from), to: this.formatLocalDateTime(to) }
+    },
     submitSync() {
       this.$refs.syncFormRef.validate(valid => {
         if (!valid) return
         const range = this.syncForm.modifiedRange || []
+        const normalizedRange = this.normalizeSyncModifiedRange(range)
+        if (!normalizedRange) return
         const payload = {
           miaoshouConfigId: this.syncForm.miaoshouConfigId,
           platform: this.syncForm.platform,
           shopIds: this.syncForm.shopIds,
           appPackageStatus: this.syncForm.appPackageStatus,
           platformOrderSns: this.syncForm.platformOrderSns,
-          gmtModifiedFrom: range[0] || '',
-          gmtModifiedTo: range[1] || '',
+          gmtModifiedFrom: normalizedRange.from,
+          gmtModifiedTo: normalizedRange.to,
           triggerType: 'manual'
         }
         this.syncing = true
         syncCrossBorderPackages(payload).then(response => {
           const result = response.data || {}
           const message = `同步完成：远端 ${result.remoteCount || 0}，新增 ${result.insertedCount || 0}，更新 ${result.updatedCount || 0}，未变化 ${result.unchangedCount || 0}，失败 ${result.failedCount || 0}`
-          result.status === 'failed' ? this.msgError(message) : this.msgSuccess(message)
+          if (result.status === 'failed') {
+            this.msgError(result.errorMessage || message)
+            return
+          }
+          this.msgSuccess(message)
           this.syncOpen = false
           return Promise.all([this.getList(), this.getSummary()])
         }).finally(() => { this.syncing = false })
@@ -548,6 +650,7 @@ export default {
 .package-filter { padding: 14px 14px 0; display: flex; flex-wrap: wrap; background: #f8fafc; border: 1px solid #edf1f5; border-radius: 10px; }.package-filter :deep(.el-input) { width: 210px; }.package-filter :deep(.el-select) { width: 165px; }.package-filter :deep(.el-date-editor) { width: 250px; }.package-toolbar { min-height: 58px; display: flex; align-items: center; justify-content: space-between; }.package-toolbar span { color: #98a2b3; font-size: 12px; }
 .package-table :deep(th.el-table__cell) { height: 46px; color: #667085; background: #f7f8fb; }.package-table :deep(td.el-table__cell) { padding: 11px 0; }.package-identity, .product-cell > div:last-child, .shop-cell, .location-cell, .logistics-cell, .money-cell { min-width: 0; display: flex; flex-direction: column; gap: 3px; }.package-identity button { max-width: 200px; padding: 0; overflow: hidden; color: #2563eb; background: none; border: 0; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }.package-identity span, .product-cell span, .shop-cell span, .location-cell span, .logistics-cell span, .money-cell span { color: #667085; font-size: 11px; }.package-identity small, .product-cell small, .logistics-cell small { color: #98a2b3; font-size: 10px; }.product-cell { display: flex; align-items: center; gap: 10px; }.product-cell strong { max-width: 180px; overflow: hidden; color: #344054; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.product-thumb { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 8px; overflow: hidden; }.image-fallback { width: 100%; height: 100%; display: grid; place-items: center; color: #64748b; background: #eef2f6; }.shop-cell strong, .location-cell strong, .logistics-cell strong, .money-cell strong { color: #344054; font-size: 12px; }.shop-cell i { margin-right: 6px; padding: 2px 4px; color: #2563eb; background: #eef4ff; border-radius: 4px; font-style: normal; }.money-cell { text-align: right; }.empty-text { color: #98a2b3; font-size: 12px; }.abnormal-mark { margin-top: 5px; color: #dc2626; font-size: 10px; }.abnormal-mark .el-icon { margin-right: 3px; vertical-align: -1px; }.package-pagination { padding-top: 17px; display: flex; justify-content: space-between; align-items: center; color: #98a2b3; font-size: 12px; }
 .package-detail { min-height: 100%; }.detail-head { min-height: 178px; padding: 36px 30px 24px; color: #fff; background: linear-gradient(130deg, #172033, #253762); position: relative; }.drawer-close { position: absolute; top: 16px; right: 18px; width: 30px; height: 30px; display: grid; place-items: center; color: #fff; background: rgba(255, 255, 255, .08); border: 0; border-radius: 50%; cursor: pointer; }.detail-head-top { display: flex; align-items: center; justify-content: space-between; gap: 20px; }.detail-head-top span { color: #9cb9ec; font-size: 11px; }.detail-head h2 { margin: 5px 0 8px; font-size: 22px; }.detail-head > p { margin: 0 0 14px; color: #b8c7e0; font-size: 12px; }.detail-body { padding: 25px 30px 50px; }.detail-refresh-bar { min-height: 38px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }.detail-refresh-bar > div { display: flex; align-items: center; gap: 10px; }.detail-refresh-bar span { color: #98a2b3; font-size: 11px; }.detail-refresh-alert { margin-bottom: 18px; }.detail-section { margin-bottom: 28px; }.detail-section h3 { margin: 0 0 15px; display: flex; align-items: center; gap: 7px; color: #1d2939; font-size: 14px; }.detail-products { display: flex; flex-direction: column; gap: 10px; }.detail-product { padding: 11px; display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 12px; background: #f8fafc; border-radius: 10px; }.detail-product-image { width: 52px; height: 52px; overflow: hidden; border-radius: 8px; }.detail-product > div:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }.detail-product strong { overflow: hidden; color: #344054; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.detail-product span, .detail-product small { color: #98a2b3; font-size: 10px; }.detail-product b, .gift-row b { color: #475467; }.gift-row { padding: 10px 12px; display: grid; grid-template-columns: 1fr 180px auto; gap: 10px; border-bottom: 1px solid #edf0f5; color: #475467; font-size: 12px; }.gift-row small { color: #98a2b3; }.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }.detail-grid > div { display: flex; flex-direction: column; gap: 5px; }.detail-grid .full { grid-column: 1 / -1; }.detail-grid span { color: #98a2b3; font-size: 11px; }.detail-grid strong { color: #475467; font-size: 12px; font-weight: 500; word-break: break-all; }.sync-alert { margin-bottom: 18px; }
+.tracking-title { display: flex; align-items: center; justify-content: space-between; }.tracking-title h3 { margin-bottom: 0; }.tracking-meta { margin: 10px 0 18px; display: flex; gap: 20px; color: #98a2b3; font-size: 10px; }.tracking-alert { margin-bottom: 16px; }.tracking-content { min-height: 88px; padding: 4px 4px 0; }.tracking-content :deep(.el-timeline) { padding-left: 5px; }.tracking-content :deep(.el-timeline-item__timestamp) { color: #98a2b3; font-size: 10px; }.tracking-content strong { color: #344054; font-size: 12px; font-weight: 600; }.tracking-content p { margin: 5px 0 0; color: #667085; font-size: 10px; line-height: 1.5; }
 @media (max-width: 1200px) { .heading-actions > span { display: none; }.package-filter :deep(.el-date-editor) { width: 220px; } }
 @media (max-width: 768px) { .package-heading { align-items: flex-start; gap: 15px; }.package-heading p, .eyebrow { display: none; }.heading-actions { flex-wrap: wrap; justify-content: flex-end; }.metric-card { min-height: 92px; padding: 13px; }.metric-icon { width: 38px; height: 38px; }.package-filter { display: grid; grid-template-columns: 1fr 1fr; }.package-filter :deep(.el-form-item), .package-filter :deep(.el-input), .package-filter :deep(.el-select), .package-filter :deep(.el-date-editor) { width: 100%; margin-right: 0; }.filter-buttons { grid-column: 1 / -1; }.detail-grid { grid-template-columns: 1fr; }.detail-grid .full { grid-column: auto; }:deep(.el-drawer) { width: 100% !important; } }
 </style>
